@@ -18,19 +18,14 @@ type User = {
   fotoPerfil: string,
 }
 
-type Dentist = {
-  name: string,
-  uid: string,
-}
-
 type Emergency = {
   name: string,
   phone: string,
   fcmToken: string | undefined,
   uid: string,
   status: string,
-  acceptDentistList: Dentist | unknown,
-  rejectDentistList: Dentist | unknown,
+  acceptDentistList: object,
+  rejectDentistList: object,
 }
 
 type CustomResponse = {
@@ -398,6 +393,74 @@ export const getEmergenciesByStatus = functions
       functions.logger.error("Erro ao buscar emergências:", exMessage);
       cResponse.status = "ERROR";
       cResponse.message = "Erro ao buscar emergências - Verificar Logs";
+      cResponse.payload = null;
+    }
+
+    return JSON.stringify(cResponse);
+  });
+
+export const updateEmergencyStatus = functions
+  .region("southamerica-east1")
+  .runWith({enforceAppCheck: false})
+  .https
+  .onCall(async (data, context) => {
+    const {name, uid, status, uidEmergency} = data;
+    const cResponse: CustomResponse = {
+      status: "ERROR",
+      message: "Erro ao atualizar o status da emergência",
+      payload: undefined,
+    };
+
+    try {
+      const emergencyRef = firebase.firestore()
+        .collection("emergency")
+        .doc(uidEmergency);
+
+      const emergencyDoc = await emergencyRef.get();
+
+      if (emergencyDoc.exists) {
+        const emergencyData = emergencyDoc.data() as Emergency;
+
+        if (status === "accepted") {
+          if (!emergencyData.acceptDentistList) {
+            emergencyData.acceptDentistList = {};
+          }
+
+          emergencyData.acceptDentistList = {[uid]: {name, uid}};
+        } else if (status === "rejected") {
+          if (!emergencyData.rejectDentistList) {
+            emergencyData.rejectDentistList = {};
+          }
+
+          emergencyData.rejectDentistList = {[uid]: {name, uid}};
+        } else {
+          cResponse.status = "ERROR";
+          cResponse.message = "Status inválido";
+          cResponse.payload = undefined;
+          return JSON.stringify(cResponse);
+        }
+
+        emergencyData.status = "draft";
+        await emergencyRef.set(emergencyData, {merge: true});
+
+        cResponse.status = "SUCCESS";
+        cResponse.message = "Status da emergência atualizado com sucesso";
+        cResponse.payload = undefined;
+      } else {
+        cResponse.status = "ERROR";
+        cResponse.message = "Emergência não encontrada";
+        cResponse.payload = undefined;
+      }
+    } catch (e) {
+      let exMessage;
+      if (e instanceof Error) {
+        exMessage = e.message;
+      }
+      functions
+        .logger.error("Erro ao atualizar o status da emergência:", exMessage);
+      cResponse.status = "ERROR";
+      cResponse
+        .message = "Erro ao atualizar o status da emergência - Verificar Logs";
       cResponse.payload = null;
     }
 

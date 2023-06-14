@@ -467,4 +467,33 @@ export const updateEmergencyStatus = functions
     return JSON.stringify(cResponse);
   });
 
+export const sendEmergencyFinishedNotificationFCM = functions
+  .region("southamerica-east1")
+  .firestore
+  .document("emergency/{emergencyId}")
+  .onUpdate(async (change, context) => {
+    const newEmergencyData = change.after.data();
+    const previousEmergencyData = change.before.data();
 
+    if (newEmergencyData.status === "finished" &&
+       previousEmergencyData.status !== "finished") {
+      const fcmToken = newEmergencyData.fcmToken;
+
+      if (fcmToken) {
+        try {
+          const notification = {
+            token: fcmToken,
+            data: {
+              text: "A emergência foi finalizada",
+            },
+          };
+
+          await admin.messaging().send(notification);
+          console.log("Notificação enviada com sucesso");
+        } catch (error) {
+          console.error("Erro ao enviar a notificação:", error);
+          throw error;
+        }
+      }
+    }
+  });

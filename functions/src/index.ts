@@ -21,6 +21,7 @@ type User = {
 type Emergency = {
   name: string,
   phone: string,
+  photos: string[];
   fcmToken: string | undefined,
   uid: string,
   status: string,
@@ -361,6 +362,8 @@ export const getEmergenciesByStatus = functions
   .runWith({enforceAppCheck: false})
   .https
   .onCall(async (data, context) => {
+    const dentistUid = data.uid;
+
     const cResponse: CustomResponse = {
       status: "ERROR",
       message: "Erro ao buscar emergências",
@@ -375,11 +378,27 @@ export const getEmergenciesByStatus = functions
       if (!querySnapshot.empty) {
         const emergenciesData = querySnapshot.docs
           .map((doc) => doc.data())
-          // eslint-disable-next-line max-len
-          .filter((emergency) => emergency.status === "new" || (emergency.status === "draft" && (emergency.acceptDentistList !== null || emergency.acceptDentistList !== undefined))) as Emergency[];
+          .filter((emergency) =>
+            (emergency.status === "new" ||
+              (emergency.status === "draft" &&
+                (emergency.acceptDentistList !== null ||
+                  emergency.acceptDentistList !== undefined))) &&
+            (!emergency.rejectDentistList ||
+              !emergency.rejectDentistList[dentistUid])
+          ) as Emergency[];
+
+        const filteredData = emergenciesData
+          .map(({name, phone, photos, status, uid, fcmToken}) => ({
+            name,
+            phone,
+            photos,
+            status,
+            uid,
+            fcmToken,
+          }));
         cResponse.status = "SUCCESS";
         cResponse.message = "Emergências encontradas";
-        cResponse.payload = JSON.stringify(emergenciesData);
+        cResponse.payload = JSON.stringify(filteredData);
       } else {
         cResponse.status = "ERROR";
         cResponse.message = "Nenhuma emergência encontrada";
@@ -497,3 +516,51 @@ export const sendEmergencyFinishedNotificationFCM = functions
       }
     }
   });
+
+export const sendInProcessNotificationFCM = functions
+  .region("southamerica-east1")
+  .firestore
+  .document("emergency/{emergencyId}")
+  .onUpdate(async (change, context) => {
+    const newEmergencyData = change.after.data();
+    const previousEmergencyData = change.before.data();
+
+    if (newEmergencyData.status === "inProcess" &&
+        previousEmergencyData.status !== "inProcess") {
+      const uidDentist = newEmergencyData.uidDentist;
+
+      if (uidDentist) {
+        try {
+          const usersSnapshot = await admin.firestore()
+            .collection("users")
+            .where("uid", "==", uidDentist)
+            .get();
+
+          if (!usersSnapshot.empty) {
+            const fcmToken = usersSnapshot.docs[0].data().fcmToken;
+
+            if (fcmToken) {
+              const notification = {
+                token: fcmToken,
+                data: {
+                  text: "A emergência está em andamento",
+                },
+              };
+
+              await admin.messaging().send(notification);
+              console.log("Notificação enviada com sucesso");
+            } else {
+              console.log("O usuário não possui um FCM token");
+            }
+          } else {
+            // eslint-disable-next-line max-len
+            console.log("Não foi encontrado um usuário com o uidDentist especificado");
+          }
+        } catch (error) {
+          console.error("Erro ao enviar a notificação:", error);
+          throw error;
+        }
+      }
+    }
+  });
+
